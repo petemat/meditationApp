@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Character Meditation App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- ADDED GLTF LOADER SCRIPT -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #2c1e3e;
+        }
+        #scene-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #ui-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            pointer-events: none;
+            opacity: 1;
+            transition: opacity 0.5s ease-in-out;
+        }
+        #ui-overlay.hidden {
+            opacity: 0;
+        }
+        #ui-overlay > * {
+            pointer-events: all;
+        }
+        .perspective-text, .progress-bar, #timer-panel {
+            transition: all 0.5s ease-in-out;
+        }
+        #timer-panel {
+            transform: translateX(100%);
+        }
+        #timer-panel.active {
+            transform: translateX(0);
+        }
+        #timer-display {
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            pointer-events: none;
+        }
+        #timer-display.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        /* Flame Animation */
+        @keyframes flicker {
+            0%, 100% { transform: scaleY(1) skewX(-2deg); opacity: 1; }
+            50% { transform: scaleY(0.95) skewX(2deg); opacity: 0.95; }
+        }
+        .flame-outer {
+            animation: flicker 1.5s ease-in-out infinite;
+        }
+        .flame-inner {
+            animation: flicker 1.2s ease-in-out infinite reverse;
+        }
+        /* Course styles */
+        #courses-toggle-icon {
+            transition: transform 0.3s ease-in-out;
+        }
+
+        #course-list-container {
+            transition: max-height 0.5s ease-in-out, opacity 0.5s ease-in-out;
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+            pointer-events: none;
+        }
+        #course-list-container.open {
+            max-height: 500px; /* A suitable max-height */
+            opacity: 1;
+            pointer-events: auto;
+        }
+        #course-list-container .course-item {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        #course-list-container .course-item:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        #course-detail-overlay {
+            transition: opacity 0.3s ease-in-out;
+        }
+        #course-detail-content {
+            transition: transform 0.3s ease-in-out;
+            transform: scale(0.95);
+        }
+        #course-detail-overlay:not(.hidden) #course-detail-content {
+            transform: scale(1);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Scene Container -->
+    <div id="scene-container"></div>
+    <div id="loading-overlay" class="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/50 text-white font-semibold">Loading Scene...</div>
+
+    <!-- UI Overlay -->
+    <div id="ui-overlay" class="relative p-4 md:p-8 w-full h-full">
+        <!-- Top Header Container -->
+        <div id="header" class="flex justify-between items-start w-full gap-4">
+            <!-- Left Panel: Mindful Journey Title -->
+            <div class="text-center p-4 bg-black/20 backdrop-blur-lg rounded-2xl border border-white/20 shadow-lg flex-shrink-0">
+                <h1 class="text-2xl font-bold text-white">Mindful Journey</h1>
+            </div>
+
+            <!-- Right Panel: Stats and Courses -->
+            <div class="flex flex-col gap-2 w-full max-w-xs">
+                <!-- Progress Panel -->
+                <div id="progress-panel" class="w-full p-3 bg-black/20 backdrop-blur-lg rounded-2xl border border-white/20 shadow-lg text-white">
+                    <div class="flex justify-between items-center mb-1">
+                        <span id="user-role" class="font-bold text-sm"></span>
+                        <span id="user-level" class="text-xs font-semibold"></span>
+                    </div>
+                    <div class="w-full bg-black/30 rounded-full h-2.5">
+                        <div id="xp-bar" class="bg-gradient-to-r from-purple-400 to-pink-500 h-2.5 rounded-full progress-bar"></div>
+                    </div>
+                    <div class="text-right text-xs mt-1 opacity-70"><span id="xp-text"></span></div>
+                </div>
+
+                <!-- Streak Panel -->
+                <div id="streak-panel" class="w-full p-3 bg-black/20 backdrop-blur-lg rounded-2xl border border-white/20 shadow-lg text-white">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center text-orange-400 font-bold">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2" viewBox="0 0 24 24"><g><path class="flame-outer" fill="#FDB813" d="M12 2C12 2 8 8 8 12c0 4 4 8 4 8s4-4 4-8c0-4-4-10-4-10z"/><path class="flame-inner" fill="#F89D13" d="M12 5c0 0-2 4-2 7s2 5 2 5 2-3 2-5-2-7-2-7z"/></g></svg>
+                            <span id="streak-count" class="text-lg">0</span>
+                        </div>
+                        <div id="calendar-view" class="flex space-x-1"></div>
+                    </div>
+                </div>
+
+                <!-- Courses Panel -->
+                <div id="courses-panel" class="relative w-full mt-2">
+                    <div id="courses-header" class="flex justify-between items-center cursor-pointer p-3 bg-black/20 backdrop-blur-lg rounded-2xl border border-white/20 shadow-lg text-white transition-all duration-300">
+                        <h4 class="font-bold text-sm text-white/90">Courses</h4>
+                        <svg id="courses-toggle-icon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white/70 transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                    </div>
+                    <div id="course-list-container" class="absolute top-full left-0 right-0 z-10">
+                        <div id="course-list" class="p-3 bg-black/40 backdrop-blur-xl rounded-b-2xl border-x border-b border-white/10 shadow-2xl space-y-1">
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dynamic Perspective Text -->
+        <main id="perspective-container" class="absolute top-1/2 -translate-y-1/2 left-4 md:left-8 flex justify-start items-center px-4 pointer-events-none">
+             <div id="perspective-text-content" class="perspective-text max-w-sm p-6 bg-black/20 backdrop-blur-lg rounded-2xl border border-white/20 shadow-lg pointer-events-auto">
+                <h2 id="perspective-title" class="text-xl font-semibold text-white mb-2"></h2>
+                <p id="perspective-description" class="text-white/80"></p>
+            </div>
+        </main>
+        
+        <!-- Bottom Navigation -->
+        <footer class="absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 flex justify-evenly items-center bg-black/20 backdrop-blur-lg p-4 rounded-full shadow-lg max-w-lg mx-auto border border-white/20">
+            <button id="add-xp-button" title="Add XP (Test)" class="text-white/70 hover:text-white transition-colors p-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></button>
+            <button id="meditation-button" title="Start Meditation" class="text-white p-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-9 w-9" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zM8 13.5a1.5 1.5 0 01-3 0V9a1.5 1.5 0 013 0v4.5zM15 9a1.5 1.5 0 00-3 0v4.5a1.5 1.5 0 003 0V9z" /></svg></button>
+
+            <button id="switch-character-button" title="Switch Character" class="text-white/70 hover:text-white transition-colors p-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-6-3a2 2 0 11-4 0 2 2 0 014 0zm-2 4a5 5 0 00-4.546 2.916A5.986 5.986 0 0010 16a5.986 5.986 0 004.546-2.084A5 5 0 0010 11z" clip-rule="evenodd" />
+                </svg>
+            </button>
+            <button id="mute-button" title="Mute Music" class="text-white/70 hover:text-white transition-colors p-2">
+                <!-- Mute/Unmute icons will be injected here by JS -->
+            </button>
+            <button title="Settings" class="text-white/70 hover:text-white transition-colors p-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.096 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            </button>
+        </footer>
+    </div>
+    
+    <!-- Timer Display -->
+    <div id="timer-display" class="hidden absolute inset-0 flex-col items-center justify-center bg-black/50 backdrop-blur-md z-30">
+        <h2 id="timer-text" class="text-6xl font-bold text-white"></h2>
+        <button id="cancel-meditation-button" class="mt-8 px-6 py-2 bg-white/20 rounded-full text-white font-semibold">Cancel</button>
+    </div>
+
+    <!-- Timer Settings Panel -->
+    <div id="timer-panel" class="absolute top-0 right-0 h-full w-full max-w-sm p-6 bg-black/40 backdrop-blur-xl border-l border-white/10 shadow-2xl text-white pointer-events-auto z-20">
+        <h3 class="text-2xl font-bold mb-6">Meditation Setup</h3>
+        
+        <div class="mb-8">
+            <h4 class="font-semibold mb-3">Duration</h4>
+            <div id="duration-options" class="flex space-x-2">
+                <button data-duration="300" class="duration-btn flex-1 p-3 bg-white/20 rounded-lg border-2 border-purple-400">5 min</button>
+                <button data-duration="600" class="duration-btn flex-1 p-3 bg-white/10 rounded-lg border-white/20">10 min</button>
+                <button data-duration="1200" class="duration-btn flex-1 p-3 bg-white/10 rounded-lg border-white/20">20 min</button>
+            </div>
+        </div>
+
+        <div class="mb-8">
+            <h4 class="font-semibold mb-3">Ambient Sound</h4>
+            <div id="sound-list" class="space-y-2"></div>
+        </div>
+
+        <button id="start-meditation-button" class="w-full py-4 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg font-bold text-lg">Start</button>
+        <button id="close-panel-button" class="w-full py-2 mt-4 text-white/50">Close</button>
+    </div>
+
+    <!-- Course Detail Modal -->
+    <!-- Course Detail Modal from old version -->
+    <div id="course-detail-overlay" class="hidden absolute inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300">
+        <div id="course-detail-content" class="max-w-2xl w-full p-8 bg-black/20 backdrop-blur-lg rounded-2xl border border-white/20 shadow-lg text-white scale-95 opacity-0 transition-all duration-300">
+            <h2 id="course-title" class="text-3xl font-bold mb-2"></h2>
+            <p id="course-duration" class="text-white/70 mb-6"></p>
+            <img id="course-image" src="" alt="Course Image" class="w-full h-48 object-cover rounded-lg mb-6 hidden">
+            <div id="course-intro" class="mb-6"></div>
+            <div id="course-steps" class="space-y-3"></div>
+            <div class="flex justify-between items-center mt-8">
+                <button id="close-course-button" class="px-6 py-2 bg-white/20 rounded-full font-semibold">Close</button>
+                <button id="start-course-button" class="px-8 py-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full font-bold">Complete</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- App State ---
+            let scene, camera, renderer, character, water, particles, cubeCamera, waterNormalMap, sky, moonLight;
+            const container = document.getElementById('scene-container');
+            let cameraAngle = 0, targetAngle = 0;
+            const cameraRadius = 10;
+            let isDragging = false, startX = 0, angleOffset = 0;
+            let currentPerspectiveIndex = 0;
+            const clock = new THREE.Clock();
+            let meditationTimer, timerInterval;
+            let selectedDuration = 300; // Default 5 minutes
+            let selectedSound = 'Calm Waves';
+            let meditationSoundPlayer, backgroundMusicPlayer;
+            let isMuted = false;
+            let musicHasStarted = false;
+            const characterBaseY = 1.6;
+            let currentCharacterType = 'female';
+            let currentCourse = null;
+            
+            // --- UI Elements ---
+            const uiOverlay = document.getElementById('ui-overlay');
+            const perspectiveTitle = document.getElementById('perspective-title');
+            const perspectiveDescription = document.getElementById('perspective-description');
+            const userRoleEl = document.getElementById('user-role');
+            const userLevelEl = document.getElementById('user-level');
+            const xpBarEl = document.getElementById('xp-bar');
+            const xpTextEl = document.getElementById('xp-text');
+            const meditationButton = document.getElementById('meditation-button');
+            const timerPanel = document.getElementById('timer-panel');
+            const closePanelButton = document.getElementById('close-panel-button');
+            const durationOptions = document.getElementById('duration-options');
+            const soundList = document.getElementById('sound-list');
+            const startMeditationButton = document.getElementById('start-meditation-button');
+            const timerDisplay = document.getElementById('timer-display');
+            const timerText = document.getElementById('timer-text');
+            const cancelMeditationButton = document.getElementById('cancel-meditation-button');
+            const loadingOverlay = document.getElementById('loading-overlay');
+            const streakCountEl = document.getElementById('streak-count');
+            const calendarViewEl = document.getElementById('calendar-view');
+            const muteButton = document.getElementById('mute-button');
+            const switchCharacterButton = document.getElementById('switch-character-button');
+            const addXpButton = document.getElementById('add-xp-button');
+            const coursesButton = document.getElementById('courses-button');
+            const coursesPanel = document.getElementById('courses-panel');
+            const courseListContainer = document.getElementById('course-list-container');
+            const courseDetailOverlay = document.getElementById('course-detail-overlay');
+            const closeCourseDetailButton = document.getElementById('close-course-button');
+            const completeCourseButton = document.getElementById('start-course-button');
+            const courseDetailTitle = document.getElementById('course-title');
+            const courseDetailDescription = document.getElementById('course-duration');
+            const courseDetailDuration = document.getElementById('course-duration');
+            const courseDetailXp = document.getElementById('course-detail-xp');
+            
+            // --- Data ---
+            const characterModels = {
+                female: 'https://raw.githubusercontent.com/petemat/meditationApp/main/Serenity_in_Stillness_0624221700_texture.glb',
+                male: 'https://raw.githubusercontent.com/petemat/meditationApp/main/A_male_person_sitting_0625155521_texture.glb'
+            };
+            const levelSystem = [ { level: 1, xpToNext: 100, title: "Novice" }, { level: 2, xpToNext: 250, title: "Apprentice" }, { level: 3, xpToNext: 500, title: "Adept" }, { level: 4, xpToNext: 1000, title: "Enlightened" }, { level: 5, xpToNext: Infinity, title: "Master" } ];
+            let userProgress = { level: 1, xp: 0, streak: 0, meditationHistory: [], character: 'female' };
+            const soundOptions = [ { name: 'Calm Waves', requiredLevel: 1, type: 'sine' }, { name: 'Rainfall', requiredLevel: 2, type: 'noise' }, { name: 'Cosmic Hum', requiredLevel: 3, type: 'om' }, ];
+            const perspectives = [ { angle: 0, title: "The Foundation: Breath", description: "Focus on the rhythm of your breath. Inhale calm, exhale tension. This is the starting point of your journey." }, { angle: Math.PI / 2, title: "The Structure: Posture", description: "A stable posture aligns the body and mind. Feel the connection to the earth beneath you." }, { angle: Math.PI, title: "The Inner World: Mind", description: "Observe your thoughts without judgment. You are the sky, and thoughts are just clouds passing by." }, { angle: 3 * Math.PI / 2, title: "The Connection: Energy", description: "Feel the flow of energy within. You are a part of a universe of constant, vibrant motion." }, ];
+            const courses = [
+                { 
+                    id: 1, title: "Mindful Breathing", duration: "5 min", requiredLevel: 1, xpReward: 25, completed: false,
+                    image: "skyle404_an_image_showing_breathing_of_a_human_torso_mouth_an_f5bc9069-3290-426d-9630-461773b9641e_0.png",
+                    content: {
+                        intro: "Your breath is your anchor to the present moment. In a world of constant distraction, focusing on the simple, vital rhythm of breathing grounds you in the now, dissolving anxiety about the past and future. It's the most fundamental tool for finding your center.",
+                        steps: [
+                            "Find a comfortable, stable posture, either sitting or lying down.",
+                            "Gently close your eyes and bring your awareness to your body.",
+                            "Notice the sensation of your breath. Feel the air entering your nostrils, filling your lungs, and then gently leaving.",
+                            "Don't try to change your breath. Just observe. When your mind wanders, gently guide it back to your breath."
+                        ]
+                    }
+                },
+                { id: 2, title: "Body Scan", duration: "10 min", requiredLevel: 2, xpReward: 50, completed: false, image: "https://raw.githubusercontent.com/petemat/meditationApp/main/skyle404_an_abstract_image_of_a_human_body_glowing_with_energy_4d9f7f7e-7e5a-4c4e-9e4a-3e4e7e5a4c4e_0.png", content: { intro: "This practice cultivates a deep awareness of your physical self, helping to release tension you may not even know you're holding.", steps: ["Lie down comfortably and close your eyes.", "Bring your attention to the toes of your left foot.", "Slowly scan your awareness up through your body, noticing any sensations.", "Acknowledge each sensation without judgment."] } },
+                { id: 3, title: "Loving-Kindness", duration: "15 min", requiredLevel: 3, xpReward: 75, completed: false, image: "https://raw.githubusercontent.com/petemat/meditationApp/main/skyle404_an_abstract_image_of_a_heart_glowing_with_warm_light_4d9f7f7e-7e5a-4c4e-9e4a-3e4e7e5a4c4e_1.png", content: { intro: "Cultivate feelings of warmth, kindness, and compassion for yourself and others.", steps: ["Sit comfortably and close your eyes.", "Repeat phrases like 'May I be happy. May I be healthy. May I be safe.'", "Extend these wishes to loved ones, neutral people, and eventually all beings."] } },
+                { id: 4, title: "Stress Reduction", duration: "10 min", requiredLevel: 4, xpReward: 100, completed: false, image: "https://raw.githubusercontent.com/petemat/meditationApp/main/skyle404_an_abstract_image_of_a_calm_lake_at_dusk_4d9f7f7e-7e5a-4c4e-9e4a-3e4e7e5a4c4e_2.png", content: { intro: "Learn to manage and reduce the stress of daily life through mindfulness.", steps: ["Identify the sources of your stress.", "Practice mindfulness to observe your stress without reacting.", "Develop healthy coping mechanisms."] } },
+                { id: 5, title: "Walking Meditation", duration: "20 min", requiredLevel: 5, xpReward: 150, completed: false, image: "https://raw.githubusercontent.com/petemat/meditationApp/main/skyle404_an_abstract_image_of_footprints_on_a_path_4d9f7f7e-7e5a-4c4e-9e4a-3e4e7e5a4c4e_3.png", content: { intro: "Bring mindfulness to the simple, everyday act of walking.", steps: ["Find a quiet place to walk back and forth.", "Focus on the sensation of your feet on the ground.", "Coordinate your breath with your steps."] } },
+            ];
+
+            // --- Main App Initialization ---
+            function main() {
+                loadProgress();
+                addEventListeners();
+                updateProgressUI();
+                populateCourses();
+                init3D();
+            }
+
+            function init3D() {
+                scene = new THREE.Scene();
+                scene.fog = new THREE.Fog(0x6a3a62, 10, 40);
+                camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                camera.position.set(0, 3, cameraRadius);
+                camera.lookAt(0, 1.5, 0);
+                renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                container.appendChild(renderer.domElement);
+                const ambientLight = new THREE.AmbientLight(0x6c5a82, 0.9);
+                scene.add(ambientLight);
+                const directionalLight = new THREE.DirectionalLight(0xffa97a, 1.2);
+                directionalLight.position.set(-20, 20, -20);
+                directionalLight.castShadow = true;
+                directionalLight.shadow.mapSize.width = 2048;
+                directionalLight.shadow.mapSize.height = 2048;
+                scene.add(directionalLight);
+                directionalLight.target.position.set(0, 0, 0);
+                scene.add(directionalLight.target);
+                
+                moonLight = new THREE.DirectionalLight(0xaaccff, 0.5);
+                moonLight.position.set(20, 15, 20);
+                scene.add(moonLight);
+                moonLight.target.position.set(0, 0, 0);
+                scene.add(moonLight.target);
+
+                const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, { format: THREE.RGBFormat, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+                cubeCamera = new THREE.CubeCamera(1, 1000, cubeRenderTarget);
+                createSky();
+                createSun();
+                createMoon();
+                createWater();
+                createIsland();
+                loadCharacter(characterModels[userProgress.character]);
+                createParticles();
+                setupAudio();
+                updatePerspectiveText(true);
+                animate();
+            }
+            
+            function setupAudio(){
+                backgroundMusicPlayer = new Tone.Player({
+                    url: "https://raw.githubusercontent.com/petemat/meditationApp/main/Whisper%20of%20the%20Wild.mp3",
+                    loop: true,
+                    volume: -6,
+                    autostart: false,
+                }).toDestination();
+                updateMuteButton();
+            }
+
+            function createSky() {
+                const skyGeo = new THREE.SphereGeometry(100, 32, 15);
+                const skyMat = new THREE.ShaderMaterial({
+                    uniforms: { topColor: { value: new THREE.Color(0x2c1e3e) }, middleColor: { value: new THREE.Color(0x6a3a62) }, bottomColor: { value: new THREE.Color(0xe87a5d) }, },
+                    vertexShader: `varying vec3 vWorldPosition; void main() { vec4 worldPosition = modelMatrix * vec4(position, 1.0); vWorldPosition = worldPosition.xyz; gl_Position = projectionMatrix * viewMatrix * worldPosition; }`,
+                    fragmentShader: `uniform vec3 topColor; uniform vec3 middleColor; uniform vec3 bottomColor; varying vec3 vWorldPosition; void main() { float h = normalize(vWorldPosition).y; vec3 finalColor = mix(middleColor, topColor, smoothstep(0.0, 0.5, h)); finalColor = mix(bottomColor, finalColor, smoothstep(-0.1, 0.1, h)); gl_FragColor = vec4(finalColor, 1.0); }`,
+                    side: THREE.BackSide
+                });
+                sky = new THREE.Mesh(skyGeo, skyMat);
+                scene.add(sky);
+            }
+
+            function createSun() {
+                const sunGroup = new THREE.Group();
+                const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xe87a5d, fog: false });
+                const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(2.5, 32, 32), sunMaterial);
+                const glowMaterial = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(generateGlowTexture(new THREE.Color(0xffa97a))), color: 0xffa97a, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+                const glowSprite = new THREE.Sprite(glowMaterial);
+                glowSprite.scale.set(10, 10, 1);
+                sunGroup.add(sunMesh);
+                sunGroup.add(glowSprite);
+                sunGroup.position.set(-35, 5, -35);
+                scene.add(sunGroup);
+            }
+            
+            function createMoon() {
+                const moonGroup = new THREE.Group();
+                const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xf0f0f5, fog: false });
+                const moonMesh = new THREE.Mesh(new THREE.SphereGeometry(1.5, 32, 32), moonMaterial);
+                const glowMaterial = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(generateGlowTexture(new THREE.Color(0xaaccff))), color: 0xaaccff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+                const glowSprite = new THREE.Sprite(glowMaterial);
+                glowSprite.scale.set(8, 8, 1);
+                moonGroup.add(moonMesh);
+                moonGroup.add(glowSprite);
+                moonGroup.position.set(35, 8, 35);
+                scene.add(moonGroup);
+            }
+
+            function generateGlowTexture(color) {
+                const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64; const context = canvas.getContext('2d'); const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32); 
+                gradient.addColorStop(0, `rgba(${color.r*255}, ${color.g*255}, ${color.b*255}, 1)`); 
+                gradient.addColorStop(0.3, `rgba(${color.r*255}, ${color.g*255}, ${color.b*255}, 0.6)`); 
+                gradient.addColorStop(1, `rgba(${color.r*255}, ${color.g*255}, ${color.b*255}, 0)`);
+                context.fillStyle = gradient; context.fillRect(0, 0, 64, 64); return canvas;
+            }
+            
+            function createWater() {
+                const waterGeom = new THREE.PlaneGeometry(100, 100); 
+                const textureLoader = new THREE.TextureLoader();
+                waterNormalMap = textureLoader.load('https://threejs.org/examples/textures/waternormals.jpg', function (texture) { texture.wrapS = texture.wrapT = THREE.RepeatWrapping; });
+                const waterMaterial = new THREE.MeshStandardMaterial({ color: 0x4c6a9b, roughness: 0.1, metalness: 0.8, envMap: cubeCamera.renderTarget.texture, envMapIntensity: 0.9, normalMap: waterNormalMap, normalScale: new THREE.Vector2(0.3, 0.3), transparent: true, opacity: 0.9 });
+                water = new THREE.Mesh(waterGeom, waterMaterial);
+                water.rotation.x = -Math.PI / 2;
+                water.position.y = -1.0; 
+                water.receiveShadow = true;
+                scene.add(water);
+            }
+            
+            function createParticles() {
+                const particleCount = 150; const positions = [];
+                for (let i = 0; i < particleCount; i++) { const angle = Math.random() * Math.PI * 2; const radius = 15 + Math.random() * 25; positions.push( Math.cos(angle) * radius, Math.random() * 20 - 5, Math.sin(angle) * radius ); }
+                const particleGeom = new THREE.BufferGeometry(); particleGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                const particleMaterial = new THREE.PointsMaterial({ color: 0xffeeff, size: 0.1, transparent: true, blending: THREE.AdditiveBlending, sizeAttenuation: true });
+                particles = new THREE.Points(particleGeom, particleMaterial); scene.add(particles);
+            }
+
+            function loadCharacter(modelUrl) {
+                if (character) scene.remove(character);
+                loadingOverlay.style.display = 'flex';
+                
+                const loader = new THREE.GLTFLoader();
+                loader.load(modelUrl, (gltf) => {
+                    character = gltf.scene;
+                    character.scale.set(2, 2, 2);
+                    character.position.y = characterBaseY; 
+                    character.traverse((child) => { if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; } });
+                    scene.add(character);
+                    loadingOverlay.style.display = 'none';
+                }, 
+                (xhr) => { console.log((xhr.loaded / xhr.total * 100) + '% loaded'); },
+                (error) => {
+                    console.error('An error happened while loading the model:', error);
+                    loadingOverlay.textContent = 'Error loading model';
+                });
+            }
+
+            function createIsland() {
+                const islandGeometry = new THREE.CylinderGeometry(4, 4.5, 1.0, 64);
+                const position = islandGeometry.attributes.position;
+                const vector = new THREE.Vector3();
+                for (let i = 0; i < position.count; i++) {
+                    vector.fromBufferAttribute(position, i);
+                    if (vector.y > 0.49) {
+                        const noise = (Math.sin(vector.x * 2) * Math.cos(vector.z * 2)) * 0.2;
+                        vector.y += noise;
+                        position.setXYZ(i, vector.x, vector.y, vector.z);
+                    }
+                }
+                position.needsUpdate = true;
+                islandGeometry.computeVertexNormals();
+
+                const textureLoader = new THREE.TextureLoader();
+                const sandNormalMap = textureLoader.load('https://threejs.org/examples/textures/waternormals.jpg', function (texture) {
+                    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+                    texture.repeat.set(5, 5);
+                });
+
+                const islandMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xd2b48c,
+                    roughness: 0.9,
+                    metalness: 0.0,
+                    bumpMap: sandNormalMap,
+                    bumpScale: 0.04
+                });
+                
+                const island = new THREE.Mesh(islandGeometry, islandMaterial);
+                island.position.y = -1.2;
+                island.receiveShadow = true;
+                scene.add(island);
+            }
+
+            function addEventListeners() {
+                container.addEventListener('touchstart', onTouchStart, { passive: false });
+                container.addEventListener('touchmove', onTouchMove, { passive: false });
+                container.addEventListener('touchend', onTouchEnd);
+                container.addEventListener('mousedown', onMouseDown);
+                container.addEventListener('mousemove', onMouseMove);
+                container.addEventListener('mouseup', onMouseUp);
+                container.addEventListener('mouseleave', onMouseUp);
+                window.addEventListener('resize', onWindowResize);
+                
+                meditationButton.addEventListener('click', toggleTimerPanel);
+                closePanelButton.addEventListener('click', toggleTimerPanel);
+                durationOptions.addEventListener('click', handleDurationSelect);
+                startMeditationButton.addEventListener('click', startMeditation);
+                cancelMeditationButton.addEventListener('click', () => stopMeditation(true));
+                muteButton.addEventListener('click', toggleMute);
+                switchCharacterButton.addEventListener('click', switchCharacter);
+                document.getElementById('courses-header').addEventListener('click', toggleCoursesPanel);
+                closeCourseDetailButton.addEventListener('click', hideCourseDetail);
+                completeCourseButton.addEventListener('click', completeCourse);
+                addXpButton.addEventListener('click', () => addXP(50));
+            }
+
+            // --- UI & Progression Logic ---
+            function toggleTimerPanel() { timerPanel.classList.toggle('active'); if (timerPanel.classList.contains('active')) { populateSoundList(); } }
+            function handleDurationSelect(e) { if (e.target.classList.contains('duration-btn')) { document.querySelectorAll('.duration-btn').forEach(btn => { btn.classList.remove('border-purple-400', 'bg-white/20'); btn.classList.add('border-white/20', 'bg-white/10'); }); e.target.classList.add('border-purple-400', 'bg-white/20'); e.target.classList.remove('border-white/20', 'bg-white/10'); selectedDuration = parseInt(e.target.dataset.duration); } }
+            function populateSoundList() {
+                soundList.innerHTML = '';
+                soundOptions.forEach(sound => {
+                    const isUnlocked = userProgress.level >= sound.requiredLevel;
+                    const soundEl = document.createElement('div');
+                    soundEl.className = `flex justify-between items-center p-3 rounded-lg transition-colors ${isUnlocked ? 'cursor-pointer bg-white/10 hover:bg-white/20' : 'bg-black/20 text-white/50'}`;
+                    if (isUnlocked) {
+                        soundEl.addEventListener('click', () => { document.querySelectorAll('#sound-list > div').forEach(el => el.classList.remove('border-2', 'border-purple-400')); soundEl.classList.add('border-2', 'border-purple-400'); selectedSound = sound.name; });
+                        if (sound.name === selectedSound) { soundEl.classList.add('border-2', 'border-purple-400'); }
+                    }
+                    soundEl.innerHTML = `<span>${sound.name}</span> ${!isUnlocked ? `<span class="text-xs flex items-center"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd" /></svg> Lvl ${sound.requiredLevel}</span>` : ''}`;
+                    soundList.appendChild(soundEl);
+                });
+            }
+            function startMeditation() {
+                Tone.start().then(() => {
+                    const soundData = soundOptions.find(s => s.name === selectedSound);
+                    if (!soundData || userProgress.level < soundData.requiredLevel) return;
+                    if (meditationSoundPlayer) { meditationSoundPlayer.dispose(); }
+                    
+                    backgroundMusicPlayer.volume.rampTo(-Infinity, 1.0);
+
+                    if (soundData.type === 'sine') { meditationSoundPlayer = new Tone.AutoFilter({ frequency: 0.5, baseFrequency: 200, octaves: 4 }).toDestination(); const osc = new Tone.Oscillator(80, "sine").connect(meditationSoundPlayer).start(); meditationSoundPlayer.start(); } 
+                    else if (soundData.type === 'noise') { meditationSoundPlayer = new Tone.AutoFilter({ frequency: 0.2, baseFrequency: 800, octaves: 3 }).toDestination(); const noise = new Tone.Noise("pink").connect(meditationSoundPlayer).start(); meditationSoundPlayer.start(); } 
+                    else if (soundData.type === 'om') { meditationSoundPlayer = new Tone.Chorus(4, 2.5, 0.5).toDestination().start(); const synth = new Tone.AMSynth().connect(meditationSoundPlayer); synth.triggerAttack("C2"); }
+                    
+                    timerPanel.classList.remove('active');
+                    meditationTimer = selectedDuration;
+                    uiOverlay.classList.add('hidden');
+                    timerDisplay.style.display = 'flex';
+                    setTimeout(() => timerDisplay.classList.add('active'), 50);
+                    
+                    timerInterval = setInterval(() => {
+                        meditationTimer--;
+                        const minutes = Math.floor(meditationTimer / 60).toString().padStart(2, '0');
+                        const seconds = (meditationTimer % 60).toString().padStart(2, '0');
+                        timerText.textContent = `${minutes}:${seconds}`;
+                        if (meditationTimer <= 0) { stopMeditation(false); }
+                    }, 1000);
+                }).catch(e => console.error("Tone.js start error:", e));
+            }
+            function stopMeditation(isCancelled) {
+                clearInterval(timerInterval);
+                if (meditationSoundPlayer) { meditationSoundPlayer.dispose(); meditationSoundPlayer = null; }
+                if (backgroundMusicPlayer) backgroundMusicPlayer.volume.rampTo(-6, 1.0);
+
+                timerDisplay.classList.remove('active');
+                setTimeout(() => {
+                    timerDisplay.style.display = 'none';
+                    uiOverlay.classList.remove('hidden');
+                }, 500);
+                
+                if (!isCancelled) {
+                    const xpGained = Math.ceil(selectedDuration / 60) * 10;
+                    if(xpGained > 0) addXp(xpGained);
+                    updateStreak();
+                }
+                saveProgress();
+            }
+            function addXp(amount) { userProgress.xp += amount; checkForLevelUp(); updateProgressUI(); }
+            function checkForLevelUp() { const currentLevelData = levelSystem[userProgress.level - 1]; if (currentLevelData && userProgress.xp >= currentLevelData.xpToNext) { userProgress.level++; userProgress.xp -= currentLevelData.xpToNext; if(timerPanel.classList.contains('active')) { populateSoundList(); } } }
+            function updateProgressUI() {
+                const currentLevelData = levelSystem[userProgress.level - 1];
+                if (!currentLevelData) return;
+                const xpForNext = currentLevelData.xpToNext;
+                const progressPercentage = isFinite(xpForNext) ? (userProgress.xp / xpForNext) * 100 : 100;
+                userLevelEl.textContent = `Lvl ${userProgress.level}`;
+                userRoleEl.textContent = currentLevelData.title;
+                xpBarEl.style.width = `${progressPercentage}%`;
+                xpTextEl.textContent = `${userProgress.xp} / ${isFinite(xpForNext) ? xpForNext : '---'} XP`;
+                streakCountEl.textContent = userProgress.streak;
+                updateCalendar();
+            }
+            function onTouchStart(e) { if (!musicHasStarted) { try { Tone.start().then(() => backgroundMusicPlayer.start()); musicHasStarted = true; } catch (err) { console.error(err); } } e.preventDefault(); startX = e.touches[0].clientX; isDragging = true; angleOffset = cameraAngle; }
+            function onTouchMove(e) { if (!isDragging) return; e.preventDefault(); const currentX = e.touches[0].clientX; const dx = currentX - startX; targetAngle = angleOffset - (dx * 0.01); }
+            function onTouchEnd() { if (!isDragging) return; isDragging = false; snapToClosestPerspective(); }
+            function onMouseDown(e) { if (!musicHasStarted) { try { Tone.start().then(() => backgroundMusicPlayer.start()); musicHasStarted = true; } catch (err) { console.error(err); } } startX = e.clientX; isDragging = true; angleOffset = cameraAngle; }
+            function onMouseMove(e) { if (!isDragging) return; const currentX = e.clientX; const dx = currentX - startX; targetAngle = angleOffset - (dx * 0.01); }
+            function onMouseUp() { if (!isDragging) return; isDragging = false; snapToClosestPerspective(); }
+            function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+            
+            function snapToClosestPerspective() {
+                const twoPi = Math.PI * 2;
+                const normalizedAngle = (targetAngle % twoPi + twoPi) % twoPi;
+                let closestIndex = 0;
+                let minDiff = Infinity;
+                perspectives.forEach((p, index) => {
+                    const diff = Math.abs(normalizedAngle - p.angle);
+                    const circularDiff = Math.min(diff, twoPi - diff);
+                    if (circularDiff < minDiff) { minDiff = circularDiff; closestIndex = index; }
+                });
+                targetAngle = perspectives[closestIndex].angle;
+                if (currentPerspectiveIndex !== closestIndex) { currentPerspectiveIndex = closestIndex; updatePerspectiveText(); }
+            }
+
+            function updatePerspectiveText(isInitial = false) {
+                const perspective = perspectives[currentPerspectiveIndex];
+                const fadeOut = () => { document.getElementById('perspective-text-content').style.opacity = '0'; document.getElementById('perspective-text-content').style.transform = 'translateY(10px)'; };
+                const fadeIn = () => { perspectiveTitle.textContent = perspective.title; perspectiveDescription.textContent = perspective.description; document.getElementById('perspective-text-content').style.opacity = '1'; document.getElementById('perspective-text-content').style.transform = 'translateY(0)'; };
+                if (isInitial) { fadeIn(); } else { fadeOut(); setTimeout(fadeIn, 300); }
+            }
+
+            function toggleMute() {
+                isMuted = !isMuted;
+                backgroundMusicPlayer.mute = isMuted;
+                updateMuteButton();
+            }
+
+            function updateMuteButton() {
+                if (isMuted) {
+                    muteButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" /></svg>`;
+                } else {
+                    muteButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" viewBox="0 0 20 20" fill="currentColor"><path d="M11 5L6 9H2v6h4l5 4V5zM15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`;
+                }
+            }
+            
+            function switchCharacter() {
+                currentCharacterType = currentCharacterType === 'female' ? 'male' : 'female';
+                userProgress.character = currentCharacterType;
+                saveProgress();
+                loadCharacter(characterModels[currentCharacterType]);
+            }
+            
+            function toggleFullscreen() {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen();
+                } else {
+                  if (document.exitFullscreen) {
+                    document.exitFullscreen(); 
+                  }
+                }
+            }
+            
+            function saveProgress() { localStorage.setItem('meditationAppProgress', JSON.stringify(userProgress)); }
+            function loadProgress() {
+                const savedProgress = localStorage.getItem('meditationAppProgress');
+                if (savedProgress) {
+                    userProgress = JSON.parse(savedProgress);
+                    currentCharacterType = userProgress.character || 'female';
+                    checkStreak();
+                }
+            }
+
+            function getDaysBetween(dateString1, dateString2) {
+                const d1 = new Date(dateString1);
+                const d2 = new Date(dateString2);
+                d1.setHours(0,0,0,0);
+                d2.setHours(0,0,0,0);
+                const diffTime = Math.abs(d2 - d1);
+                return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+            }
+
+            function checkStreak() {
+                const lastDate = userProgress.meditationHistory[userProgress.meditationHistory.length - 1];
+                if (!lastDate) return;
+                const today = new Date().toISOString().split('T')[0];
+                const daysDiff = getDaysBetween(lastDate, today);
+                if (daysDiff > 1) {
+                    userProgress.streak = 0;
+                    saveProgress();
+                }
+            }
+            
+            function updateStreak(forceToday = false) {
+                const today = new Date().toISOString().split('T')[0];
+                const lastDate = userProgress.meditationHistory[userProgress.meditationHistory.length - 1];
+                
+                if (!userProgress.meditationHistory.includes(today)) {
+                     userProgress.meditationHistory.push(today);
+                }
+
+                if (lastDate) {
+                    const daysDiff = getDaysBetween(lastDate, today);
+                    if (daysDiff === 1) {
+                        userProgress.streak++;
+                    } else if (daysDiff > 1) {
+                        userProgress.streak = 1;
+                    }
+                } else {
+                     userProgress.streak = 1;
+                }
+                
+                saveProgress();
+                updateProgressUI();
+            }
+            
+            function updateCalendar() {
+                calendarViewEl.innerHTML = '';
+                const today = new Date();
+                const historySet = new Set(userProgress.meditationHistory);
+
+                for (let i = 6; i >= 0; i--) {
+                    const date = new Date(today);
+                    date.setDate(today.getDate() - i);
+                    const dateString = date.toISOString().split('T')[0];
+                    const dayInitial = date.toLocaleDateString('en-US', { weekday: 'short' })[0];
+
+                    const dayEl = document.createElement('div');
+                    dayEl.className = 'w-6 h-6 rounded-md bg-white/10 flex items-center justify-center text-xs font-bold';
+                    dayEl.textContent = dayInitial;
+
+                    if (historySet.has(dateString)) {
+                        dayEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-orange-400 shadow-lg"></div>`;
+                    }
+                    
+                    calendarViewEl.appendChild(dayEl);
+                }
+            }
+
+
+            function addXP(amount) {
+                userProgress.xp += amount;
+                const currentLevelInfo = levelSystem[userProgress.level - 1];
+                if (userProgress.xp >= currentLevelInfo.xpToNext) {
+                    userProgress.level++;
+                    userProgress.xp -= currentLevelInfo.xpToNext;
+                }
+                saveProgress();
+                updateProgressUI();
+                populateCourses(); // Re-populate to unlock new sounds
+            }
+
+            function populateCourses() {
+                console.log("Attempting to populate courses...");
+                const courseList = document.getElementById('course-list');
+                
+                if (!courseList) {
+                    console.error("CRITICAL: Course list container '#course-list' not found in the DOM.");
+                    return;
+                }
+
+                if (!courses || courses.length === 0) {
+                    console.error("CRITICAL: 'courses' data array is empty or not defined.");
+                    return;
+                }
+
+                console.log(`Found course list container. Processing ${courses.length} courses.`);
+                courseList.innerHTML = '';
+
+                courses.forEach((course, idx) => {
+                    const isLocked = userProgress.level < course.requiredLevel;
+                    const courseEl = document.createElement('div');
+                    courseEl.dataset.courseId = course.id;
+                    courseEl.className = `course-item p-2 rounded-md text-white ${isLocked ? 'opacity-50' : 'cursor-pointer hover:bg-white/10'}`;
+                    
+                    courseEl.innerHTML = `
+                        <div class="flex justify-between items-center">
+                            <span class="font-semibold">${course.title}</span>
+                            ${isLocked ? `<span class="text-xs">Lvl ${course.requiredLevel}</span>` : (course.completed ? `<span class="text-green-400 text-xs">✓</span>` : '')}
+                        </div>
+                    `;
+                    if (!isLocked) {
+                        courseEl.addEventListener('click', () => showCourseDetail(course));
+                    }
+                    
+                    courseList.appendChild(courseEl);
+                });
+                console.log("Finished populating courses.");
+            }
+
+            function toggleCoursesPanel() {
+                const listContainer = document.getElementById('course-list-container');
+                const icon = document.getElementById('courses-toggle-icon');
+                const header = document.getElementById('courses-header');
+
+                listContainer.classList.toggle('open');
+                icon.classList.toggle('rotate-180');
+                
+                // Toggle the border radius on the header to create a seamless panel
+                header.classList.toggle('rounded-2xl');
+                header.classList.toggle('rounded-t-2xl');
+            }
+
+            function showCourseDetail(course) {
+                console.log('showCourseDetail called', course);
+                currentCourse = course;
+                document.getElementById('course-title').textContent = course.title;
+                document.getElementById('course-duration').textContent = course.duration;
+                document.getElementById('course-image').src = course.image || '';
+                document.getElementById('course-image').classList.toggle('hidden', !course.image);
+                document.getElementById('course-intro').textContent = course.content?.intro || '';
+                const stepsContainer = document.getElementById('course-steps');
+                stepsContainer.innerHTML = '';
+                if (course.content?.steps?.length) {
+                    course.content.steps.forEach((step, i) => {
+                        const stepDiv = document.createElement('div');
+                        stepDiv.innerHTML = `<span class="font-semibold">Step ${i+1}:</span> ${step}`;
+                        stepsContainer.appendChild(stepDiv);
+                    });
+                }
+                const overlay = document.getElementById('course-detail-overlay');
+                const modal = document.getElementById('course-detail-content');
+                overlay.classList.remove('hidden');
+                document.getElementById('ui-overlay').classList.add('hidden');
+                // Animate modal content in
+                setTimeout(() => {
+                    modal.classList.remove('opacity-0', 'scale-95');
+                    modal.classList.add('opacity-100', 'scale-100');
+                }, 10);
+            }
+
+            function hideCourseDetail() {
+                const overlay = document.getElementById('course-detail-overlay');
+                const modal = document.getElementById('course-detail-content');
+                // Animate modal content out
+                modal.classList.add('opacity-0', 'scale-95');
+                modal.classList.remove('opacity-100', 'scale-100');
+                setTimeout(() => {
+                    overlay.classList.add('hidden');
+                    document.getElementById('ui-overlay').classList.remove('hidden');
+                    currentCourse = null;
+                }, 300); // match transition duration
+            }
+
+            function completeCourse() {
+                if (!currentCourse || currentCourse.completed) return;
+                currentCourse.completed = true;
+                addXP(currentCourse.xpReward);
+                populateCourses();
+                hideCourseDetail();
+            }
+
+            function animate() {
+                requestAnimationFrame(animate);
+                const delta = clock.getDelta();
+                const time = clock.getElapsedTime();
+                if (water && water.material.normalMap) { water.material.normalMap.offset.x += delta * 0.02; water.material.normalMap.offset.y += delta * 0.01; }
+                if (particles) { particles.rotation.y += delta * 0.02; }
+                cameraAngle += (targetAngle - cameraAngle) * 0.1;
+                camera.position.x = Math.sin(cameraAngle) * cameraRadius;
+                camera.position.z = Math.cos(cameraAngle) * cameraRadius;
+                camera.lookAt(0, 1.5, 0);
+                if (character) {
+                    character.position.y = characterBaseY + Math.sin(time * 2.5) * 0.05;
+                }
+                if (water && sky) {
+                    water.visible = false;
+                    if(character) character.visible = false;
+                    cubeCamera.update(renderer, scene);
+                    if(character) character.visible = true;
+                    water.visible = true;
+                }
+                renderer.render(scene, camera);
+            }
+            
+            // --- Start App ---
+            main();
+        });
+    </script>
+</body>
+</html>
